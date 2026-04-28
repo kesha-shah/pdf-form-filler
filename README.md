@@ -10,6 +10,17 @@ Many official PDF forms are flat scans or print-only. Without embedded `AcroForm
 
 This tool gives you a third option: **calibrate the field positions once with a point and click UI, then fill the form by typing into a web form that stamps text onto the PDF at the right coordinates**. The output is a print-ready PDF that flows through any browser's print dialog.
 
+## Screenshots
+
+![Calibrator — point and click on each field to record its position](docs/calibrator.png)
+*Calibrator: load a PDF, click on each field, save the field map.*
+
+![Filler — form on the left, live PDF preview on the right](docs/filler.png)
+*Filler: auto-generated form on the left, the PDF re-renders live as you type.*
+
+![Demo — end-to-end workflow](docs/demo.gif)
+*Short demo: typing into the form, watching the PDF fill in real time, printing.*
+
 ## Features
 
 - **Visual calibrator** — load any PDF, click on field positions, save coordinates to JSON
