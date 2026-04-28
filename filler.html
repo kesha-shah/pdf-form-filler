@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Claim Form Filler</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { display: flex; font-family: -apple-system, sans-serif; margin: 0; height: 100vh; }
+    #left { width: 460px; padding: 16px; background: #f5f5f7; overflow-y: auto; border-right: 1px solid #ddd; }
+    #right { flex: 1; background: #888; }
+    iframe { width: 100%; height: 100%; border: 0; background: white; }
+    h2 { margin: 12px 0 8px; font-size: 14px; text-transform: uppercase; color: #555; display: flex; justify-content: space-between; align-items: center; }
+    h2 button { font-size: 11px; padding: 3px 8px; }
+    .field { margin-bottom: 8px; }
+    .field label { display: block; font-size: 12px; color: #333; margin-bottom: 2px; }
+    .field input[type=text] { width: 100%; padding: 6px; font-family: monospace; font-size: 13px; border: 1px solid #ccc; border-radius: 3px; text-transform: uppercase; }
+    .field.checkbox { display: flex; align-items: center; gap: 6px; }
+    .field.checkbox label { margin: 0; flex: 1; }
+    .radio-group { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 4px 0; }
+    .radio-group label { margin: 0; font-weight: normal; cursor: pointer; }
+    .radio-group input[type=radio] { margin-right: 4px; vertical-align: middle; }
+    .radio-group .clear { padding: 2px 8px; font-size: 11px; background: #e5e5ea; color: #333; border: 0; border-radius: 3px; cursor: pointer; }
+    .date-parts { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+    .date-parts input.date-cell { width: 46px; text-align: center; font-family: monospace; padding: 6px; font-size: 13px; border: 1px solid #ccc; border-radius: 3px; }
+    .date-parts .date-sep { font-weight: bold; color: #888; }
+    button { padding: 8px 12px; background: #007aff; color: white; border: 0; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    button.secondary { background: #e5e5ea; color: #000; }
+    button:hover { opacity: 0.85; }
+    .actions { position: sticky; bottom: 0; background: #f5f5f7; padding: 12px 0 0; display: flex; gap: 6px; border-top: 1px solid #ddd; margin-top: 12px; }
+    .tweaks { background: white; padding: 8px; border-radius: 4px; border: 1px solid #ddd; font-size: 12px; }
+    .tweaks .row { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+    .tweaks label { flex: 1; }
+    .tweaks input { width: 60px; padding: 3px; }
+    #status { margin-top: 8px; font-size: 12px; color: #666; min-height: 16px; }
+  </style>
+</head>
+<body>
+  <div id="left">
+    <h2>Hospital defaults
+      <span style="display:flex; gap:4px;">
+        <button id="saveDefaults" class="secondary">Save these</button>
+        <button id="exportDefaults" class="secondary" title="Download saved defaults as defaults.json (used by bundle.py)">Export</button>
+      </span>
+    </h2>
+    <div id="constants"></div>
+
+    <h2>Per-claim fields</h2>
+    <div id="perClaim"></div>
+
+    <h2>Tweaks (alignment)</h2>
+    <div class="tweaks">
+      <div class="row"><label>Font size</label><input id="fontSize" type="number" value="7" step="0.5" min="6" max="20"></div>
+      <div class="row"><label>X offset (pts)</label><input id="offsetX" type="number" value="-6" step="0.5"></div>
+      <div class="row"><label>Y offset (pts)</label><input id="offsetY" type="number" value="-1.5" step="0.5"></div>
+    </div>
+
+    <div class="actions">
+      <button id="fillBtn">Fill PDF</button>
+      <button id="printBtn" class="secondary">Print</button>
+      <button id="resetBtn" class="secondary">Reset claim</button>
+      <button id="reloadMapBtn" class="secondary">Reload map</button>
+    </div>
+    <div id="status"></div>
+  </div>
+  <div id="right">
+    <iframe id="preview"></iframe>
+  </div>
+
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script>
+    // Backward-compat fallback: any field whose name is in this set is treated as a hospital default
+    // even if its entry doesn't have isDefault: true. New fields should use the isDefault flag
+    // (set via the calibrator's checkbox or sidebar ★ toggle).
+    const CONSTANT_FIELDS = new Set([
+      "Name of the hospital",
+      "Hospital ID",
+      "Name of the treating doctor",
+      "Registration No. with State Code",
+      "Phone No.",
+      "Address of the Hospital",
+      "Address of Hospital",
+      "City"
+    ]);
+
+    function isConstantField(name) {
+      return fieldMap[name]?.isDefault === true || CONSTANT_FIELDS.has(name);
+    }
+
+    let fieldMap, pdfBytes, lastUrl;
+
+    function bootstrapBakedDefaults() {
+      // In bundled offline mode, bundle.py sets window.__INLINE_DEFAULTS__.
+      // Seed localStorage from it on first run so dad's hospital info is pre-filled.
+      // No-op in dev mode (variable is undefined).
+      if (window.__INLINE_DEFAULTS__ && !localStorage.getItem('claimFormDefaults')) {
+        localStorage.setItem('claimFormDefaults', JSON.stringify(window.__INLINE_DEFAULTS__));
+      }
+    }
+
+    async function init() {
+      bootstrapBakedDefaults();
+      const [mapRes, pdfRes] = await Promise.all([
+        fetch('field-map.json', { cache: 'no-store' }),
+        fetch('claim-form-part-b.pdf', { cache: 'no-store' })
+      ]);
+      fieldMap = await mapRes.json();
+      pdfBytes = await pdfRes.arrayBuffer();
+      buildForm();
+      loadDefaults();
+      await renderPdf();
+    }
+
+    async function reloadFieldMap() {
+      const savedValues = getInputs();
+      const res = await fetch('/field-map.json', { cache: 'no-store' });
+      fieldMap = await res.json();
+      document.getElementById('constants').innerHTML = '';
+      document.getElementById('perClaim').innerHTML = '';
+      buildForm();
+      Object.keys(savedValues).forEach(k => {
+        const inp = document.querySelector(`[data-field="${CSS.escape(k)}"]`);
+        if (!inp) return;
+        if (inp.type === 'checkbox' || inp.type === 'radio') inp.checked = !!savedValues[k];
+        else inp.value = savedValues[k] || '';
+      });
+      loadDefaults();
+      await renderPdf();
+      setStatus('Field map reloaded.');
+    }
+
+    function detectDateTimeGroups() {
+      // Box-type fields with " - DD/MM/YY" or " - HH/MM" suffixes get rendered as one row.
+      const groups = {};
+      Object.keys(fieldMap).forEach(name => {
+        if (fieldMap[name].type !== 'boxes') return;
+        const idx = name.lastIndexOf(' - ');
+        if (idx < 0) return;
+        const suffix = name.slice(idx + 3);
+        if (!['DD', 'MM', 'YY', 'HH'].includes(suffix)) return;
+        const prefix = name.slice(0, idx);
+        groups[prefix] = groups[prefix] || { parts: {} };
+        groups[prefix].parts[suffix] = name;
+      });
+      const memberToGroup = {};
+      Object.keys(groups).forEach(prefix => {
+        const g = groups[prefix];
+        const has = Object.keys(g.parts);
+        if (has.includes('DD') && has.includes('MM')) {
+          g.type = 'date';
+          g.order = ['DD', 'MM', 'YY'].filter(p => g.parts[p]);
+        } else if (has.includes('HH') && has.includes('MM')) {
+          g.type = 'time';
+          g.order = ['HH', 'MM'].filter(p => g.parts[p]);
+        } else {
+          delete groups[prefix];
+          return;
+        }
+        g.order.forEach(s => memberToGroup[g.parts[s]] = prefix);
+      });
+      return { groups, memberToGroup };
+    }
+
+    function detectGroups() {
+      // Group point-type fields that share a first word (or " - " prefix).
+      // Returns: { groups: { groupName: [{name, option}] }, memberToGroup: { fieldName: groupName } }
+      const groups = {};
+      Object.keys(fieldMap).forEach(name => {
+        if (fieldMap[name].type !== 'point') return;
+        let g = null, opt = null;
+        if (name.includes(' - ')) {
+          const parts = name.split(/\s*-\s*/);
+          g = parts[0];
+          opt = parts.slice(1).join(' - ');
+        } else {
+          const m = name.match(/^(\S+)\s+(.+)$/);
+          if (m) { g = m[1]; opt = m[2]; }
+        }
+        if (g) (groups[g] = groups[g] || []).push({ name, option: opt });
+      });
+      const memberToGroup = {};
+      Object.keys(groups).forEach(g => {
+        if (groups[g].length < 2) delete groups[g];
+        else groups[g].forEach(m => memberToGroup[m.name] = g);
+      });
+      return { groups, memberToGroup };
+    }
+
+    function buildForm() {
+      const constEl = document.getElementById('constants');
+      const claimEl = document.getElementById('perClaim');
+      const dt = detectDateTimeGroups();
+      const radio = detectGroups();
+      const renderedDt = new Set();
+      const renderedRadio = new Set();
+
+      Object.keys(fieldMap).forEach(name => {
+        const f = fieldMap[name];
+        if (dt.memberToGroup[name]) {
+          const prefix = dt.memberToGroup[name];
+          if (renderedDt.has(prefix)) return;
+          renderedDt.add(prefix);
+          renderDateTimeRow(prefix, dt.groups[prefix], constEl, claimEl);
+          return;
+        }
+        if (radio.memberToGroup[name]) {
+          const g = radio.memberToGroup[name];
+          if (renderedRadio.has(g)) return;
+          renderedRadio.add(g);
+          renderRadioGroup(g, radio.groups[g], constEl, claimEl);
+          return;
+        }
+        renderSingleField(name, f, constEl, claimEl);
+      });
+    }
+
+    function renderDateTimeRow(prefix, group, constEl, claimEl) {
+      const isConst = group.order.every(s => isConstantField(group.parts[s]));
+      const wrap = document.createElement('div');
+      wrap.className = 'field';
+      const label = document.createElement('label');
+      label.textContent = prefix + (group.type === 'date' ? '  (DD / MM / YY)' : '  (HH : MM)');
+      wrap.appendChild(label);
+      const partsWrap = document.createElement('div');
+      partsWrap.className = 'date-parts';
+      const sepChar = group.type === 'date' ? '/' : ':';
+      group.order.forEach((suffix, i) => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.dataset.field = group.parts[suffix];
+        input.maxLength = 2;
+        input.placeholder = suffix;
+        input.className = 'date-cell';
+        input.addEventListener('input', (e) => {
+          if (e.target.value.length === 2 && i < group.order.length - 1) {
+            partsWrap.querySelectorAll('input.date-cell')[i + 1].focus();
+          }
+        });
+        partsWrap.appendChild(input);
+        if (i < group.order.length - 1) {
+          const sep = document.createElement('span');
+          sep.className = 'date-sep';
+          sep.textContent = sepChar;
+          partsWrap.appendChild(sep);
+        }
+      });
+      wrap.appendChild(partsWrap);
+      (isConst ? constEl : claimEl).appendChild(wrap);
+    }
+
+    function renderSingleField(name, f, constEl, claimEl) {
+      const isConst = isConstantField(name);
+      const wrap = document.createElement('div');
+      wrap.className = 'field' + (f.type === 'point' ? ' checkbox' : '');
+      const label = document.createElement('label');
+      const suffix = f.type === 'boxes' ? ` (${f.maxChars})` : f.type === 'text' ? ' (free text)' : '';
+      label.textContent = name + suffix;
+      const input = document.createElement('input');
+      input.dataset.field = name;
+      if (f.type === 'boxes') {
+        input.type = 'text';
+        input.maxLength = f.maxChars;
+      } else if (f.type === 'text') {
+        input.type = 'text';
+      } else {
+        input.type = 'checkbox';
+      }
+      if (f.type === 'point') { wrap.appendChild(input); wrap.appendChild(label); }
+      else { wrap.appendChild(label); wrap.appendChild(input); }
+      (isConst ? constEl : claimEl).appendChild(wrap);
+    }
+
+    function renderRadioGroup(groupName, items, constEl, claimEl) {
+      const isConst = items.every(i => isConstantField(i.name));
+      const wrap = document.createElement('div');
+      wrap.className = 'field';
+      const label = document.createElement('label');
+      label.textContent = groupName;
+      wrap.appendChild(label);
+      const radioWrap = document.createElement('div');
+      radioWrap.className = 'radio-group';
+      items.forEach((item, idx) => {
+        const id = `radio-${groupName}-${idx}`.replace(/\s+/g, '-');
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = `group--${groupName}`;
+        radio.id = id;
+        radio.dataset.field = item.name;
+        const lbl = document.createElement('label');
+        lbl.htmlFor = id;
+        lbl.textContent = item.option;
+        radioWrap.appendChild(radio);
+        radioWrap.appendChild(lbl);
+      });
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.textContent = 'Clear';
+      clearBtn.className = 'clear';
+      clearBtn.onclick = () => {
+        radioWrap.querySelectorAll('input[type=radio]').forEach(r => r.checked = false);
+      };
+      radioWrap.appendChild(clearBtn);
+      wrap.appendChild(radioWrap);
+      (isConst ? constEl : claimEl).appendChild(wrap);
+    }
+
+    function getInputs() {
+      const data = {};
+      document.querySelectorAll('[data-field]').forEach(inp => {
+        const k = inp.dataset.field;
+        const f = fieldMap[k];
+        data[k] = (f.type === 'boxes' || f.type === 'text') ? inp.value : inp.checked;
+      });
+      return data;
+    }
+
+    async function renderPdf() {
+      const data = getInputs();
+      const fontSize = parseFloat(document.getElementById('fontSize').value);
+      const offsetX = parseFloat(document.getElementById('offsetX').value);
+      const offsetY = parseFloat(document.getElementById('offsetY').value);
+
+      const { PDFDocument, StandardFonts, rgb } = PDFLib;
+      const doc = await PDFDocument.load(pdfBytes);
+      const page = doc.getPages()[0];
+      const font = await doc.embedFont(StandardFonts.HelveticaBold);
+
+      Object.keys(fieldMap).forEach(name => {
+        const f = fieldMap[name];
+        const v = data[name];
+        if (v === '' || v === false || v == null) return;
+        if (f.type === 'boxes') {
+          const text = String(v).toUpperCase();
+          for (let i = 0; i < Math.min(text.length, f.maxChars); i++) {
+            const ch = text[i];
+            const charWidth = font.widthOfTextAtSize(ch, fontSize);
+            const boxCenter = f.x + i * f.pitch + f.pitch / 2;
+            page.drawText(ch, {
+              x: boxCenter - charWidth / 2 + offsetX,
+              y: f.y + offsetY,
+              size: fontSize,
+              font,
+              color: rgb(0, 0, 0)
+            });
+          }
+        } else if (f.type === 'text') {
+          page.drawText(String(v).toUpperCase(), {
+            x: f.x,
+            y: f.y,
+            size: fontSize,
+            font,
+            color: rgb(0, 0, 0)
+          });
+        } else {
+          const cx = f.x, cy = f.y;
+          const black = rgb(0, 0, 0);
+          page.drawLine({
+            start: { x: cx - 4, y: cy + 1 },
+            end:   { x: cx - 1, y: cy - 3 },
+            thickness: 1.4,
+            color: black
+          });
+          page.drawLine({
+            start: { x: cx - 1, y: cy - 3 },
+            end:   { x: cx + 4.5, y: cy + 4 },
+            thickness: 1.4,
+            color: black
+          });
+        }
+      });
+
+      const bytes = await doc.save();
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl = URL.createObjectURL(blob);
+      document.getElementById('preview').src = lastUrl;
+      setStatus('Rendered. Adjust tweaks if alignment is off, then Print.');
+    }
+
+    function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+    document.getElementById('fillBtn').addEventListener('click', renderPdf);
+
+    document.getElementById('printBtn').addEventListener('click', () => {
+      if (!lastUrl) { setStatus('Click "Fill PDF" first.'); return; }
+      // Try iframe.print() first (works when served from http://). If the iframe
+      // can't be scripted (file:// + blob URL is treated as cross-origin in some
+      // browsers), fall back to opening the PDF in a new tab so the user can
+      // print it via the PDF viewer's toolbar or Ctrl+P / Cmd+P.
+      let printed = false;
+      try {
+        const iframe = document.getElementById('preview');
+        if (iframe.contentWindow && iframe.contentWindow.document) {
+          iframe.contentWindow.focus();
+          iframe.contentWindow.print();
+          printed = true;
+        }
+      } catch (e) { /* cross-origin — fall through */ }
+      if (!printed) {
+        const a = document.createElement('a');
+        a.href = lastUrl;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.click();
+        setStatus('Opened in a new tab — press Ctrl+P (or Cmd+P) to print.');
+      }
+    });
+
+    document.getElementById('reloadMapBtn').addEventListener('click', reloadFieldMap);
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      document.querySelectorAll('#perClaim [data-field]').forEach(inp => {
+        if (inp.type === 'checkbox' || inp.type === 'radio') inp.checked = false;
+        else inp.value = '';
+      });
+      renderPdf();
+    });
+
+    document.getElementById('exportDefaults').addEventListener('click', () => {
+      const stored = localStorage.getItem('claimFormDefaults') || '{}';
+      const blob = new Blob([stored], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'defaults.json';
+      a.click();
+      setStatus('Downloaded defaults.json — place it next to bundle.py and run the bundler.');
+    });
+
+    document.getElementById('saveDefaults').addEventListener('click', () => {
+      const data = getInputs();
+      const defaults = {};
+      Object.keys(data).forEach(k => {
+        if (isConstantField(k)) defaults[k] = data[k];
+      });
+      localStorage.setItem('claimFormDefaults', JSON.stringify(defaults));
+      setStatus('Hospital defaults saved (in this browser).');
+    });
+
+    function loadDefaults() {
+      const stored = localStorage.getItem('claimFormDefaults');
+      if (!stored) return;
+      try {
+        const defaults = JSON.parse(stored);
+        Object.keys(defaults).forEach(k => {
+          const inp = document.querySelector(`[data-field="${CSS.escape(k)}"]`);
+          if (!inp) return;
+          if (inp.type === 'checkbox' || inp.type === 'radio') inp.checked = !!defaults[k];
+          else inp.value = defaults[k] || '';
+        });
+      } catch {}
+    }
+
+    ['fontSize', 'offsetX', 'offsetY'].forEach(id => {
+      document.getElementById(id).addEventListener('change', renderPdf);
+    });
+
+    init();
+  </script>
+</body>
+</html>

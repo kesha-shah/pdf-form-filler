@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Claim Form Calibrator</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { display: flex; font-family: -apple-system, sans-serif; margin: 0; height: 100vh; }
+    #sidebar { width: 380px; padding: 16px; background: #f5f5f7; overflow-y: auto; border-right: 1px solid #ddd; }
+    #canvas-wrap { flex: 1; overflow: auto; padding: 16px; background: #999; position: relative; }
+    canvas { display: block; box-shadow: 0 2px 12px rgba(0,0,0,0.3); cursor: crosshair; background: white; }
+    h3 { margin: 0 0 12px; }
+    h4 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; color: #666; }
+    label { display: block; margin: 8px 0 3px; font-size: 12px; color: #333; }
+    input, select, button { width: 100%; padding: 7px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+    button { background: #007aff; color: white; border: 0; cursor: pointer; margin-top: 6px; }
+    button:hover { background: #005ec4; }
+    button.secondary { background: #e5e5ea; color: #000; }
+    button.secondary:hover { background: #d5d5da; }
+    button.danger { background: #ff3b30; }
+    .row { display: flex; gap: 6px; }
+    .row > * { flex: 1; }
+    #status { margin-top: 10px; padding: 8px; background: #fff3cd; border-radius: 4px; font-size: 12px; min-height: 18px; }
+    #status.active { background: #d1f0d1; }
+    .field-row { display: flex; align-items: center; padding: 5px 6px; border-bottom: 1px solid #e5e5ea; font-size: 12px; }
+    .field-row .name { flex: 1; font-family: monospace; }
+    .field-row .meta { color: #888; font-size: 11px; margin-right: 6px; }
+    .field-row button { width: auto; padding: 2px 8px; margin: 0; font-size: 11px; }
+    #log { font-family: monospace; font-size: 11px; white-space: pre-wrap; background: white; padding: 8px; border: 1px solid #ddd; border-radius: 4px; max-height: 240px; overflow-y: auto; margin-top: 6px; }
+    .hint { font-size: 11px; color: #666; margin-top: 4px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <h3>Claim Form Calibrator</h3>
+
+    <label>1. Load PDF</label>
+    <input type="file" id="file" accept="application/pdf">
+
+    <label>2. Optional: load existing map</label>
+    <input type="file" id="loadmap" accept="application/json">
+
+    <h4>Add a field</h4>
+    <label>Mode</label>
+    <select id="mode">
+      <option value="multi">Multi-box: click FIRST then LAST box</option>
+      <option value="auto">Multi-box: click FIRST only (use default pitch)</option>
+      <option value="single">Single point: one click (checkbox tick)</option>
+      <option value="text">Free text: one click (text starts here, no boxes)</option>
+      <option value="group">Radio group: header + options (click each)</option>
+      <option value="date">Date: DD / MM / YY (3 clicks, auto pitch)</option>
+      <option value="time">Time: HH / MM (2 clicks, auto pitch)</option>
+    </select>
+
+    <div id="groupNameRow" style="display:none;">
+      <label>Group header (e.g. "Type of Admission")</label>
+      <input id="groupName" autocomplete="off">
+    </div>
+
+    <label id="fnameLabel">Field name</label>
+    <input id="fname" placeholder="e.g. hospitalName" autocomplete="off">
+
+    <label>Max chars (multi-box only)</label>
+    <input id="maxchars" type="number" value="20" min="1">
+
+    <label style="display:flex; gap:6px; align-items:center; margin-top:8px;">
+      <input type="checkbox" id="isDefault" style="width:auto; margin:0;">
+      <span style="font-size:12px;">Save as hospital default (pre-fillable, won't reset between claims)</span>
+    </label>
+
+    <button id="start">Start clicking</button>
+    <div id="status">Load a PDF to begin.</div>
+
+    <div class="hint">
+      <b>Multi-box fields:</b> click at the baseline (bottom of the box, slightly inset from the left edge).<br>
+      <b>Single point (checkboxes):</b> click the dead center of the checkbox — the tick will be drawn centered there.<br>
+      <b>Free text:</b> click where the text should START on the line (baseline). User types a sentence; whole string is stamped at that point.<br>
+      <b>Radio group:</b> set a header once, then for each option type its name and click its checkbox. Header sticks until you change it.<br>
+      <b>Date / Time:</b> enter field name (e.g. "Date of Discharge"), then click the FIRST box of each part in order (DD → MM → YY, or HH → MM).<br>
+      Re-enter a field name to overwrite it.
+    </div>
+
+    <h4>Captured fields (<span id="count">0</span>)</h4>
+    <div id="fields"></div>
+
+    <h4>Output</h4>
+    <button id="saveProject">Save to project (auto-sync)</button>
+    <div class="row">
+      <button id="download" class="secondary">Download JSON</button>
+      <button id="copy" class="secondary">Copy JSON</button>
+    </div>
+    <button id="undo" class="secondary">Undo last field</button>
+    <button id="clear" class="danger">Clear all</button>
+    <div id="log">{}</div>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    const SCALE = 2.5;
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+
+    let fieldMap = {};
+    let fieldOrder = [];
+    let pending = null;
+    let clicks = [];
+    let defaultPitch = null;
+    let loadedPage = null;
+
+    function setStatus(msg, active = false) {
+      statusEl.textContent = msg;
+      statusEl.classList.toggle('active', active);
+    }
+
+    document.getElementById('file').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      loadedPage = await pdf.getPage(1);
+      const viewport = loadedPage.getViewport({ scale: SCALE });
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await redrawCanvas();
+      setStatus('PDF loaded. Enter a field name and click Start.');
+    });
+
+    async function redrawCanvas() {
+      if (!loadedPage) return;
+      const viewport = loadedPage.getViewport({ scale: SCALE });
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      await loadedPage.render({ canvasContext: ctx, viewport }).promise;
+      for (const name of fieldOrder) drawFieldMarker(fieldMap[name], name);
+    }
+
+    document.getElementById('loadmap').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const text = await file.text();
+      try {
+        const obj = JSON.parse(text);
+        fieldMap = obj;
+        fieldOrder = Object.keys(obj);
+        const lastBoxes = fieldOrder.map(k => obj[k]).filter(f => f.type === 'boxes');
+        if (lastBoxes.length) defaultPitch = lastBoxes[lastBoxes.length - 1].pitch;
+        renderList();
+        await redrawCanvas();
+        setStatus(`Loaded ${fieldOrder.length} fields.`);
+      } catch (err) { alert('Invalid JSON'); }
+    });
+
+    canvas.addEventListener('click', (e) => {
+      if (!pending) return;
+      const rect = canvas.getBoundingClientRect();
+      const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
+      const cy = (e.clientY - rect.top) * (canvas.height / rect.height);
+      const pdfX = cx / SCALE;
+      const pdfY = (canvas.height - cy) / SCALE;
+      drawClickMarker(cx, cy, '#007aff');
+
+      if (pending.mode === 'multipart') {
+        const partLabel = pending.parts[pending.partIndex];
+        const fullName = `${pending.name} - ${partLabel}`;
+        const entry = { x: round(pdfX), y: round(pdfY), pitch: round(defaultPitch), maxChars: 2, type: 'boxes' };
+        if (document.getElementById('isDefault').checked) entry.isDefault = true;
+        if (!fieldMap[fullName]) fieldOrder.push(fullName);
+        fieldMap[fullName] = entry;
+        drawFieldMarker(entry, fullName);
+        pending.partIndex++;
+        if (pending.partIndex >= pending.parts.length) {
+          const finishedName = pending.name;
+          pending = null;
+          document.getElementById('fname').value = '';
+          document.getElementById('fname').focus();
+          setStatus(`Saved "${finishedName}" (${pending?.parts || 'all'} parts). Default pitch: ${defaultPitch.toFixed(2)}`);
+          renderList();
+        } else {
+          setStatus(`Click FIRST box of ${pending.parts[pending.partIndex]} for "${pending.name}".`, true);
+        }
+        return;
+      }
+
+      clicks.push({ cx, cy, pdfX, pdfY });
+
+      if (pending.mode === 'single' || pending.mode === 'auto' || pending.mode === 'text') {
+        finalize();
+      } else if (pending.mode === 'multi' && clicks.length === 2) {
+        finalize();
+      } else {
+        setStatus(`First box at (${pdfX.toFixed(1)}, ${pdfY.toFixed(1)}). Now click LAST box.`, true);
+      }
+    });
+
+    function drawClickMarker(x, y, color) {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawFieldMarker(field) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 59, 48, 0.6)';
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 1;
+      const drawDot = (pdfX, pdfY) => {
+        const cx = pdfX * SCALE;
+        const cy = canvas.height - pdfY * SCALE;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      };
+      if (field.type === 'point' || field.type === 'text') {
+        drawDot(field.x, field.y);
+      } else {
+        for (let i = 0; i < field.maxChars; i++) drawDot(field.x + i * field.pitch, field.y);
+      }
+      ctx.restore();
+    }
+
+    document.getElementById('mode').addEventListener('change', () => {
+      const mode = document.getElementById('mode').value;
+      document.getElementById('groupNameRow').style.display = mode === 'group' ? 'block' : 'none';
+      document.getElementById('fnameLabel').textContent = mode === 'group' ? 'Option name (e.g. "Emergency")' : 'Field name';
+      document.getElementById('fname').placeholder = mode === 'group' ? 'option name' : 'e.g. hospitalName';
+    });
+
+    document.getElementById('start').addEventListener('click', () => {
+      let name = document.getElementById('fname').value.trim();
+      if (!name) { alert(document.getElementById('mode').value === 'group' ? 'Option name required' : 'Field name required'); return; }
+      let mode = document.getElementById('mode').value;
+      const maxChars = parseInt(document.getElementById('maxchars').value);
+
+      if (mode === 'group') {
+        const groupName = document.getElementById('groupName').value.trim();
+        if (!groupName) { alert('Group header required'); return; }
+        name = `${groupName} - ${name}`;
+        mode = 'single';
+      }
+
+      if ((mode === 'auto' || mode === 'date' || mode === 'time') && defaultPitch == null) {
+        alert('No default pitch yet. Calibrate at least one multi-box field first.');
+        return;
+      }
+
+      if (mode === 'date' || mode === 'time') {
+        const parts = mode === 'date' ? ['DD', 'MM', 'YY'] : ['HH', 'MM'];
+        pending = { name, mode: 'multipart', parts, partIndex: 0 };
+        clicks = [];
+        setStatus(`Click FIRST box of ${parts[0]} for "${name}".`, true);
+        return;
+      }
+
+      pending = { name, mode, maxChars };
+      clicks = [];
+      const msg = mode === 'single'
+        ? `Click the position for "${name}".`
+        : mode === 'auto'
+          ? `Click FIRST box for "${name}" (using pitch=${defaultPitch.toFixed(2)}, n=${maxChars}).`
+          : `Click FIRST box for "${name}" (n=${maxChars}).`;
+      setStatus(msg, true);
+    });
+
+    function finalize() {
+      const name = pending.name;
+      let entry;
+      if (pending.mode === 'single') {
+        entry = { x: round(clicks[0].pdfX), y: round(clicks[0].pdfY), type: 'point' };
+      } else if (pending.mode === 'text') {
+        entry = { x: round(clicks[0].pdfX), y: round(clicks[0].pdfY), type: 'text' };
+      } else if (pending.mode === 'auto') {
+        entry = { x: round(clicks[0].pdfX), y: round(clicks[0].pdfY), pitch: round(defaultPitch), maxChars: pending.maxChars, type: 'boxes' };
+      } else {
+        const first = clicks[0], last = clicks[1];
+        const n = pending.maxChars;
+        const pitch = n > 1 ? (last.pdfX - first.pdfX) / (n - 1) : 0;
+        defaultPitch = pitch;
+        entry = { x: round(first.pdfX), y: round(first.pdfY), pitch: round(pitch), maxChars: n, type: 'boxes' };
+      }
+      if (document.getElementById('isDefault').checked) entry.isDefault = true;
+      if (!fieldMap[name]) fieldOrder.push(name);
+      fieldMap[name] = entry;
+      drawFieldMarker(entry, name);
+      pending = null;
+      clicks = [];
+      document.getElementById('fname').value = '';
+      document.getElementById('fname').focus();
+      setStatus(`Saved "${name}"${entry.isDefault ? ' as default' : ''}. Default pitch: ${defaultPitch ? defaultPitch.toFixed(2) : 'none'}`);
+      renderList();
+    }
+
+    function round(n) { return Math.round(n * 100) / 100; }
+
+    function renderList() {
+      document.getElementById('count').textContent = fieldOrder.length;
+      document.getElementById('log').textContent = JSON.stringify(fieldMap, null, 2);
+      const fieldsEl = document.getElementById('fields');
+      fieldsEl.innerHTML = '';
+      fieldOrder.forEach(k => {
+        const f = fieldMap[k];
+        const row = document.createElement('div');
+        row.className = 'field-row';
+        const meta = f.type === 'point' ? 'point' : f.type === 'text' ? 'text' : `${f.maxChars}× pitch ${f.pitch.toFixed(1)}`;
+        row.innerHTML = `<span class="name">${k}</span><span class="meta">${meta}</span>`;
+        const star = document.createElement('button');
+        star.textContent = f.isDefault ? '★' : '☆';
+        star.title = f.isDefault ? 'Hospital default — click to unmark' : 'Click to mark as hospital default';
+        star.className = 'secondary';
+        star.style.cssText = 'width:auto; padding:2px 6px; margin-right:4px; font-size:13px; color:' + (f.isDefault ? '#f5a623' : '#aaa');
+        star.onclick = () => {
+          if (f.isDefault) delete f.isDefault;
+          else f.isDefault = true;
+          renderList();
+        };
+        row.appendChild(star);
+        const del = document.createElement('button');
+        del.textContent = '×';
+        del.className = 'danger';
+        del.onclick = () => {
+          delete fieldMap[k];
+          fieldOrder = fieldOrder.filter(n => n !== k);
+          renderList();
+          redrawCanvas();
+        };
+        row.appendChild(del);
+        fieldsEl.appendChild(row);
+      });
+    }
+
+    document.getElementById('download').addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(fieldMap, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'field-map.json';
+      a.click();
+    });
+
+    document.getElementById('copy').addEventListener('click', async () => {
+      await navigator.clipboard.writeText(JSON.stringify(fieldMap, null, 2));
+      setStatus('JSON copied to clipboard.');
+    });
+
+    document.getElementById('saveProject').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/save-field-map', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fieldMap, null, 2)
+        });
+        const result = await res.json();
+        if (result.ok) {
+          setStatus(`Saved to project (${result.bytes} bytes). Refresh filler.html to pick up changes.`);
+        } else {
+          setStatus(`Save failed: ${result.error || 'unknown error'}`);
+        }
+      } catch (e) {
+        setStatus(`Save failed: ${e.message}. Are you running serve.py instead of http.server?`);
+      }
+    });
+
+    document.getElementById('undo').addEventListener('click', () => {
+      if (!fieldOrder.length) return;
+      const last = fieldOrder.pop();
+      delete fieldMap[last];
+      renderList();
+      redrawCanvas();
+      setStatus(`Removed "${last}".`);
+    });
+
+    document.getElementById('clear').addEventListener('click', () => {
+      if (!confirm('Clear all fields?')) return;
+      fieldMap = {};
+      fieldOrder = [];
+      defaultPitch = null;
+      renderList();
+      redrawCanvas();
+      setStatus('Cleared.');
+    });
+  </script>
+</body>
+</html>

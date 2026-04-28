@@ -1,0 +1,20 @@
+# Bundler output (re-generated from sources)
+claim-form.html
+
+# Cached pdf-lib download (re-fetched if missing)
+pdf-lib.min.js
+
+# Personal data — do not commit hospital-specific files
+claim-form-part-b.pdf
+field-map.json
+defaults.json
+
+# Agent / tool working dir
+.claude/
+
+# OS / editor noise
+.DS_Store
+.vscode/
+.idea/
+*.swp
+__pycache__/
