@@ -1,184 +1,179 @@
 # PDF Form Filler
 
-A point and click tool for filling printable PDF forms that don't have electronic form fields. Designed for forms with character boxes (one letter per square) like government and insurance claim forms.
+Fill out paper-style PDF forms by typing into a web page instead of writing by hand. Built especially for forms with little boxes for each letter — the kind hospitals, government offices, and insurance companies hand out.
 
-Originally built for filling Indian medical insurance claim forms at a small hospital where the front desk runs an old Windows PC with no admin rights. Ships as a single offline HTML file.
+**After a one-time setup, the daily experience is simple: open a file, type the details, print. No internet, no installations, no technical knowledge needed.**
 
 ## Why this exists
 
-Many official PDF forms are flat scans or print-only. Without embedded `AcroForm` fields, the usual options are: print and write by hand, pay for Adobe Acrobat Pro, or hire a typesetter to add fields. None of those are practical for a small clinic.
+Many official PDF forms can't be typed into directly — they're scans or locked print-only files. The usual options are:
 
-This tool gives you a third option: **calibrate the field positions once with a point and click UI, then fill the form by typing into a web form that stamps text onto the PDF at the right coordinates**. The output is a print-ready PDF that flows through any browser's print dialog.
+- Print and write on it by hand (slow, messy, easy to make mistakes)
+- Buy Adobe Acrobat Pro (expensive)
+- Pay someone to add fillable fields (too much hassle for one form)
+
+This tool is a fourth option: type into a simple form on screen, the tool fills in your PDF, you print it.
 
 ## Screenshots
 
-![Calibrator — point and click on each field to record its position](docs/calibrator.png)
-*Calibrator: load a PDF, click on each field, save the field map.*
+![Calibrator: click on each field to tell the tool where it goes](docs/calibrator.png)
+*Calibrator: click once on each field to record where it lives on the page.*
 
-![Filler — form on the left, live PDF preview on the right](docs/filler.png)
-*Filler: auto-generated form on the left, the PDF re-renders live as you type.*
+![Filler: type on the left, the PDF updates on the right](docs/filler.png)
+*Filler: type into the form on the left, the PDF on the right updates as you type.*
 
-![Demo — end-to-end workflow](docs/demo.gif)
-*Short demo: typing into the form, watching the PDF fill in real time, printing.*
+![Demo: end-to-end walkthrough](docs/demo.gif)
+*Quick demo: filling a form and printing.*
 
-## Features
+## Two phases — and they are very different
 
-- **Visual calibrator** — load any PDF, click on field positions, save coordinates to JSON
-- **Field types supported**:
-  - Multi-box character fields (with auto pitch detection)
-  - Single-point checkboxes
-  - Radio groups (auto-detected from `Header - Option` naming)
-  - Date fields (`DD / MM / YY`) and time fields (`HH : MM`)
-  - Free-text fields on writing lines
-- **Hospital defaults** — flag fields as pre-fillable so static info (name, address, registration number, etc.) is stored once and reused across all claims
-- **Live preview** — every change re-renders the PDF instantly
-- **Offline bundling** — produces a single self-contained HTML file (~700 KB) with the PDF, the field map, the library, and your defaults all inlined
-- **No backend** — pure browser app; Python is only used for the local dev server and the one-shot bundler
+| | **Setup phase** | **Daily-use phase** |
+|---|---|---|
+| **Who does it** | A tech-savvy person (developer, IT helper, son/daughter) | Anyone — no tech skills needed |
+| **What you need** | A computer with Python and a browser | Any computer with a browser |
+| **Internet?** | Yes (just to download once) | **No, ever** |
+| **Time required** | About 30 minutes, only the first time | A minute or two, per filled form |
+| **Result** | One small file you hand off | A printed, filled-in form |
 
-## How it works
+The setup produces a single file. After that, the person filling forms never touches Python, never goes online, never installs anything. They double-click the file and type.
 
-1. **Calibrate** (`calibrate.html`) — open the PDF, click each field, label it, save the field map.
-2. **Fill** (`filler.html`) — auto-generates a web form from the field map, types stamp text onto the PDF live, prints.
-3. **Bundle** (`bundle.py`) — collapses everything into a single offline HTML file for the end user.
+---
 
-## File structure
+## For the daily user — how to fill forms
 
-```
-.
-├── calibrate.html         Point-and-click calibrator
-├── filler.html            Form + live PDF preview + print
-├── serve.py               Local dev server (POST endpoint for auto-sync)
-├── bundle.py              Produces the single-file offline bundle
-├── claim-form-part-b.pdf  Your blank PDF (replace with your own form)
-├── field-map.json         Generated by the calibrator
-├── defaults.json          Hospital defaults (Export button in filler)
-└── claim-form.html        Final output of bundle.py — ship this
-```
+You'll need this **only once you've been given the file** by whoever set things up. From then on:
 
-## Prerequisites
+1. **Save the file** they sent you anywhere on your computer (Desktop is easiest).
+2. **Double-click the file.** It opens in your browser like a web page.
+3. The repeating fields (organization name, address, contact info, etc.) are **already filled in**.
+4. **Type the details that change** — names, dates, and so on. The preview on the right updates as you type.
+5. **Click Print** and pick your printer.
 
-- **Python 3** — only on the dev machine, only to run `serve.py` and `bundle.py`. Pre-installed on macOS and most Linux distros.
-- **A modern browser** — Chrome, Edge (Chromium), Firefox, or Safari released in 2021 or later.
+Repeat for every form. That's the whole workflow.
 
-The end user's machine needs **only a browser**. Python is never required there.
+A few useful notes:
 
-## Quick start
+- You can do this on any computer with a modern browser — Windows, Mac, anything. Even an old laptop.
+- You can be completely offline. Wi-Fi off, ethernet unplugged, doesn't matter.
+- If you close it by accident, just double-click again — your saved info is remembered.
+- If you make a mistake before printing, click **Reset form** to clear the variable details (your saved info stays).
+
+That's all. No more reading needed if you're just filling forms.
+
+---
+
+## For the setup person — one-time setup per form
+
+Now the technical part. You do this **once** for a given form, then hand off the result and you're done. If the form changes, repeat. Otherwise this section is irrelevant after day one.
+
+### What you need
+
+- **Python 3** — already on macOS and Linux; free download from [python.org](https://www.python.org/downloads/) for Windows
+- **A modern browser** — Chrome, Edge, Firefox, or Safari from 2021 or later
+- **About 30 minutes** for your first form
+
+### Setup steps
 
 ```bash
-# 1. Clone and enter the project
-git clone <this repo>
+git clone https://github.com/kesha-shah/pdf-form-filler.git
 cd pdf-form-filler
-
-# 2. Drop your blank PDF as claim-form-part-b.pdf
-#    (or update the file paths in code if yours has a different name)
-
-# 3. Start the dev server
+# Place your blank PDF inside the folder, named claim-form-part-b.pdf
 python3 serve.py
 ```
 
-Then in your browser:
+Now open your browser to the addresses below.
 
-### Step 1 — Calibrate (one-time per form)
+### Step 1 — Calibrate the form
 
-Open `http://localhost:8000/calibrate.html`. Click **Load PDF** to render the form on a canvas at 2.5x zoom.
+Open http://localhost:8000/calibrate.html. Click **Load PDF** and choose your blank form.
 
-For each field, pick a mode, type a name, then click the appropriate position(s) on the PDF:
+For each field on the form, pick what kind of field it is, give it a name, and click on the right spot:
 
-| Mode | When to use | Clicks |
-|------|-------------|--------|
-| Multi-box (first + last) | Long boxed text, first calibration of the form (sets default pitch) | 2 |
-| Multi-box (first only) | Subsequent boxed fields with the same pitch | 1 |
-| Single point | Standalone checkbox | 1 |
-| Radio group | Set of mutually exclusive checkboxes (Gender, Type of Admission) | 1 per option |
-| Date | `DD / MM / YY` triple | 3 |
-| Time | `HH : MM` pair | 2 |
+| Field type | When to use it | Clicks |
+|---|---|---|
+| Multi-box (first + last) | A long row of boxes — the first one tells the tool the spacing | 2 |
+| Multi-box (first only) | More rows of boxes with the same spacing as before | 1 |
+| Single point | A single checkbox | 1 |
+| Radio group | Multiple checkboxes where you pick one (e.g. Gender, Yes/No) | 1 per option |
+| Date | DD / MM / YY in three small boxes | 3 |
+| Time | HH : MM in two small boxes | 2 |
 | Free text | Plain text on a writing line | 1 |
 
-Tick **"Save as hospital default"** for fields that should be pre-filled (hospital name, registration number, etc.). Click **Save to project** to write `field-map.json`.
+Tick the **"Same on every form"** box for fields you'll always fill in the same way (organization name, address, phone, etc.). Click **Save to project** when done.
 
 ### Step 2 — Test the filler
 
-Open `http://localhost:8000/filler.html`. The form is auto-generated from your field map, split into:
+Open http://localhost:8000/filler.html. The page shows a form built from your calibration, split into two parts:
 
-- **Hospital defaults** — fields marked as defaults (pre-fillable, persist across claims)
-- **Per-claim fields** — patient name, dates, diagnosis, etc.
+- **Same on every form** — the fields you marked. Fill these once, click **Save these**, they're remembered.
+- **Different each time** — the fields you fill fresh for each new form.
 
-Type values, watch the live preview render the filled PDF. Adjust alignment via the **Tweaks** panel if text doesn't sit cleanly inside the boxes:
+Type some test values. The PDF on the right updates instantly. If text sits a bit off inside the boxes, use the **Tweaks** panel:
 
-- **Font size** — typically 6.5–8 for Indian-style forms
-- **X offset** — nudge text horizontally (e.g. `-6` to center it inside boxes after a left-edge calibration click)
-- **Y offset** — nudge text vertically (baseline alignment)
+- **Font size** — try 6.5 to 8 depending on box size
+- **X / Y offset** — nudge text horizontally and vertically until it sits cleanly inside the boxes
 
-Click **Save these** in the Hospital defaults header to persist your hospital's info to localStorage.
+### Step 3 — Pack your saved info into the file
 
-### Step 3 — Export defaults and bundle
-
-In the filler, click **Export** next to **Save these**. A `defaults.json` file downloads — move it into the project folder.
+In the filler, click **Export** next to **Save these**. A file called `defaults.json` downloads. Move it into the project folder, then run the bundler:
 
 ```bash
 mv ~/Downloads/defaults.json .
 python3 bundle.py
 ```
 
-This produces `claim-form.html` (~700 KB), a single file with:
-
-- pdf-lib library inlined
-- Your blank PDF as a base64 string
-- Your `field-map.json` as a JS object literal
-- Your `defaults.json` as a JS object literal
-- A `fetch()` shim so the existing code finds everything inline
+You'll get `claim-form.html` — a single file (about 700 KB) with everything inside it: the blank PDF, the field positions, the code that does the filling, and your saved info.
 
 ### Step 4 — Hand off
 
-Email `claim-form.html` to the end user (or copy via USB). They:
+Send `claim-form.html` to the daily user — email, USB stick, anything. They save it, double-click, fill, print. That's the whole handoff. They never need to know any of the steps above.
 
-1. Save it anywhere — Desktop is easiest
-2. Double-click → opens in their default browser
-3. Hospital fields are already filled
-4. They type the per-claim details, click **Print**, choose a printer
+---
 
-Works fully offline — no internet, no install, no admin rights.
+## Using it for a different form
 
-## Adapting for a different form
+The tool isn't tied to any specific PDF. To set it up for another form:
 
-The tool is generic. For any other character-boxed PDF:
+1. Place your blank PDF in the project folder
+2. Run the calibrator and click through the new fields
+3. Mark the always-the-same fields with the ★ in the sidebar
+4. Run the bundler
 
-1. Replace `claim-form-part-b.pdf` with your form (or update the filename references)
-2. Calibrate fresh in `calibrate.html`
-3. Mark the appropriate fields as defaults using the ★ toggle in the sidebar
-4. Re-bundle
+Each form you set up produces its own bundled file you can hand off independently.
 
-The legacy hardcoded `CONSTANT_FIELDS` set in `filler.html` is just a backward-compat fallback — new fields rely entirely on the `isDefault` flag set during calibration.
+## Browser support
 
-## Browser compatibility
+Works in:
+- Chrome and Edge — 2021 or later
+- Firefox — 2021 or later
+- Safari — late 2020 or later
 
-Works in any browser released in 2021 or later:
-- Chrome / Edge (Chromium-based) — version 90+ (April 2021)
-- Firefox — version 88+ (April 2021)
-- Safari — version 14+ (September 2020)
+**Does not work in Internet Explorer.** IE was retired in 2022. On older Windows machines, install Chrome (free, takes a couple of minutes).
 
-**Does not work in Internet Explorer.** IE was retired in 2022 and the code uses modern JavaScript (async/await, template literals, fetch, modern pdf-lib internals). On older Windows machines, install Chrome or use the new Edge.
+## A note about printing
 
-## Print behaviour notes
+When the daily user clicks **Print**, their browser's print dialog opens. They can pick any printer or save it as a PDF for their records.
 
-- On `http://localhost`, the print button triggers the browser's print dialog directly via the iframe.
-- On `file://` (offline / bundled mode), browsers treat the PDF blob URL as cross-origin from the host page and silently block scripted printing. The button falls back to opening the rendered PDF in a new tab; the user presses **Ctrl+P** or uses the PDF viewer's built-in print toolbar. This is documented in the in-app status message.
+If they opened the file by double-clicking it (rather than through a local server), clicking **Print** opens the filled PDF in a new tab — they then press **Ctrl+P** there. This is normal browser behaviour and is documented in the on-screen status message.
 
-## Architecture notes
+## How it works under the hood
 
-- **No backend, no framework.** Everything is plain HTML/CSS/JS plus pdf-lib (loaded from CDN in dev, inlined in the bundle).
-- **State** lives in `field-map.json` (calibration data, source of truth) and browser `localStorage` (hospital defaults, per-browser).
-- `serve.py` extends Python's `http.server` with one extra endpoint, `POST /save-field-map`, so the calibrator can write directly to disk on the dev machine.
-- `bundle.py` does three things: replaces the pdf-lib `<script src>` tag with an inline copy, injects an inline data block (PDF base64, field map JSON, defaults JSON), and monkey-patches `window.fetch()` so existing fetch calls resolve from inline data without changing runtime code.
+For developers who want to fork or modify:
+
+- Plain HTML, CSS, JavaScript — no frameworks, no build step
+- Drawing on the PDF is done by [pdf-lib](https://pdf-lib.js.org), embedded in the final bundle
+- All your data lives in two places: `field-map.json` (field positions) and your browser's local storage (your saved info)
+- `serve.py` is a tiny web server that lets the calibrator save files to disk during setup
+- `bundle.py` reads the source files and produces one self-contained HTML by embedding everything inside
 
 ## Contributing
 
-PRs welcome. Useful directions:
+Pull requests welcome. Some ideas:
 
-- Per-field offset overrides (current tweaks are global)
-- Multi-page PDF support (calibrator and filler currently assume single-page forms)
-- Built-in validation rules (digit-only, date sanity, max length warnings)
-- An on-screen "first-run" tour of the calibrator
+- Per-field text offsets (alignment is currently global)
+- Multi-page PDF support (current code assumes one page)
+- Validation hints (digit-only fields, date sanity, etc.)
+- A first-time tour to guide new users through the calibrator
 
 ## License
 

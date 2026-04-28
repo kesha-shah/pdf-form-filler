@@ -65,7 +65,7 @@
 
     <label style="display:flex; gap:6px; align-items:center; margin-top:8px;">
       <input type="checkbox" id="isDefault" style="width:auto; margin:0;">
-      <span style="font-size:12px;">Save as hospital default (pre-fillable, won't reset between claims)</span>
+      <span style="font-size:12px;">Same on every form (pre-filled, never resets)</span>
     </label>
 
     <button id="start">Start clicking</button>
@@ -317,7 +317,7 @@
         row.innerHTML = `<span class="name">${k}</span><span class="meta">${meta}</span>`;
         const star = document.createElement('button');
         star.textContent = f.isDefault ? '★' : '☆';
-        star.title = f.isDefault ? 'Hospital default — click to unmark' : 'Click to mark as hospital default';
+        star.title = f.isDefault ? 'On every form — click to remove' : 'Click to keep on every form';
         star.className = 'secondary';
         star.style.cssText = 'width:auto; padding:2px 6px; margin-right:4px; font-size:13px; color:' + (f.isDefault ? '#f5a623' : '#aaa');
         star.onclick = () => {

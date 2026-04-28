@@ -36,15 +36,15 @@
 </head>
 <body>
   <div id="left">
-    <h2>Hospital defaults
+    <h2>Same on every form
       <span style="display:flex; gap:4px;">
         <button id="saveDefaults" class="secondary">Save these</button>
-        <button id="exportDefaults" class="secondary" title="Download saved defaults as defaults.json (used by bundle.py)">Export</button>
+        <button id="exportDefaults" class="secondary" title="Download saved info as defaults.json (for bundling)">Export</button>
       </span>
     </h2>
     <div id="constants"></div>
 
-    <h2>Per-claim fields</h2>
+    <h2>Different each time</h2>
     <div id="perClaim"></div>
 
     <h2>Tweaks (alignment)</h2>
@@ -57,7 +57,7 @@
     <div class="actions">
       <button id="fillBtn">Fill PDF</button>
       <button id="printBtn" class="secondary">Print</button>
-      <button id="resetBtn" class="secondary">Reset claim</button>
+      <button id="resetBtn" class="secondary">Reset form</button>
       <button id="reloadMapBtn" class="secondary">Reload map</button>
     </div>
     <div id="status"></div>
@@ -432,7 +432,7 @@
         if (isConstantField(k)) defaults[k] = data[k];
       });
       localStorage.setItem('claimFormDefaults', JSON.stringify(defaults));
-      setStatus('Hospital defaults saved (in this browser).');
+      setStatus('Defaults saved (in this browser).');
     });
 
     function loadDefaults() {
